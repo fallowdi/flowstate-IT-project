@@ -1,5 +1,6 @@
-
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -27,9 +28,9 @@ class _HomeScreenState extends State<HomeScreen> {
     'Other',
   ];
 
-  final List<Map<String, dynamic>> assignments = [];
+final List assignments = [];
 
-  final List<Map<String, dynamic>> schedule = [];
+final List schedule = [];
 
   final Map<String, bool> meals = {
     'Breakfast': false,
@@ -37,15 +38,103 @@ class _HomeScreenState extends State<HomeScreen> {
     'Dinner': false,
   };
 
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  // ---------------- PERSISTENCE (LOAD & SAVE) ----------------
+
+  Future<void> _loadData() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    setState(() {
+      studentName = prefs.getString('studentName') ?? 'Maxiwell';
+      focusMode = prefs.getBool('focusMode') ?? false;
+
+      // Load meals
+      final savedMeals = prefs.getString('meals');
+      if (savedMeals != null) {
+        final Map<String, dynamic> decodedMeals = jsonDecode(savedMeals);
+        decodedMeals.forEach((key, value) {
+          if (meals.containsKey(key)) {
+            meals[key] = value as bool;
+          }
+        });
+      }
+
+      // Load assignments
+      final savedAssignments = prefs.getString('assignments');
+      if (savedAssignments != null) {
+        final List<dynamic> decodedList = jsonDecode(savedAssignments);
+        assignments.clear();
+        for (var item in decodedList) {
+          assignments.add({
+            'title': item['title'],
+            'subject': item['subject'],
+            'date': DateTime.parse(item['date']),
+            'done': item['done'],
+          });
+        }
+      }
+
+      // Load schedule
+      final savedSchedule = prefs.getString('schedule');
+      if (savedSchedule != null) {
+        final List<dynamic> decodedList = jsonDecode(savedSchedule);
+        schedule.clear();
+        for (var item in decodedList) {
+          schedule.add({
+            'title': item['title'],
+            'time': TimeOfDay(
+              hour: item['hour'],
+              minute: item['minute'],
+            ),
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _saveData() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString('studentName', studentName);
+    await prefs.setBool('focusMode', focusMode);
+    await prefs.setString('meals', jsonEncode(meals));
+
+    // Convert DateTime to ISO8601 String before encoding
+    final encodedAssignments = assignments.map((a) {
+      return {
+        'title': a['title'],
+        'subject': a['subject'],
+        'date': (a['date'] as DateTime).toIso8601String(),
+        'done': a['done'],
+      };
+    }).toList();
+    await prefs.setString('assignments', jsonEncode(encodedAssignments));
+
+    // Convert TimeOfDay to hour & minute ints before encoding
+    final encodedSchedule = schedule.map((s) {
+      final time = s['time'] as TimeOfDay;
+      return {
+        'title': s['title'],
+        'hour': time.hour,
+        'minute': time.minute,
+      };
+    }).toList();
+    await prefs.setString('schedule', jsonEncode(encodedSchedule));
+  }
+
   // ---------------- MAIN SCREEN ----------------
 
   @override
   Widget build(BuildContext context) {
     final completed = assignments.where((a) => a['done'] == true).length;
 
-    final assignmentProgress = assignments.isEmpty
-        ? 0.0
-        : completed / assignments.length;
+    final assignmentProgress =
+        assignments.isEmpty ? 0.0 : completed / assignments.length;
 
     final mealProgress =
         meals.values.where((value) => value).length / meals.length;
@@ -150,8 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       progressRing(
                         title: 'Meals',
                         value: mealProgress,
-                        detail:
-                            '${meals.values.where((v) => v).length} / 3',
+                        detail: '${meals.values.where((v) => v).length} / 3',
                         color: const Color(0xFF72D6B0),
                       ),
                       progressRing(
@@ -313,6 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           setState(() {
                             meals[meal] = value ?? false;
                           });
+                          _saveData();
                         },
                       );
                     }).toList(),
@@ -360,6 +449,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   setState(() {
                                     assignment['done'] = value ?? false;
                                   });
+                                  _saveData();
                                 },
                               ),
                               title: Text(
@@ -387,6 +477,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   setState(() {
                                     assignments.remove(assignment);
                                   });
+                                  _saveData();
                                 },
                               ),
                             );
@@ -453,6 +544,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   setState(() {
                                     schedule.remove(item);
                                   });
+                                  _saveData();
                                 },
                               ),
                             );
@@ -496,6 +588,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           setState(() {
                             focusMode = value;
                           });
+                          _saveData();
 
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -670,6 +763,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   setState(() {
                     studentName = controller.text.trim();
                   });
+                  _saveData();
                 }
                 Navigator.pop(context);
               },
@@ -796,6 +890,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         'done': false,
                       });
                     });
+                    _saveData();
 
                     Navigator.pop(dialogContext);
                   },
@@ -896,14 +991,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         final first = a['time'] as TimeOfDay;
                         final second = b['time'] as TimeOfDay;
 
-                        final firstMinutes =
-                            first.hour * 60 + first.minute;
-                        final secondMinutes =
-                            second.hour * 60 + second.minute;
+                        final firstMinutes = first.hour * 60 + first.minute;
+                        final secondMinutes = second.hour * 60 + second.minute;
 
                         return firstMinutes.compareTo(secondMinutes);
                       });
                     });
+                    _saveData();
 
                     Navigator.pop(dialogContext);
                   },
